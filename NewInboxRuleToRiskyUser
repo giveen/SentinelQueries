@@ -1,0 +1,26 @@
+OfficeActivity
+| where OfficeWorkload == "Exchange"
+| where Operation in ("New-InboxRule", "Set-InboxRule")
+| extend RuleParams = parse_json(Parameters)
+| mv-expand RuleParams
+| extend ParamName = tostring(RuleParams.Name), ParamValue = tostring(RuleParams.Value)
+| summarize Params = make_bag(pack(ParamName, ParamValue)) by TimeGenerated, UserId, Operation
+| extend 
+    StopProcessing = tostring(Params["StopProcessingRules"]),
+    FromAddressContains = tostring(Params["FromAddressContainsWords"]),
+    DeleteMessage = tostring(Params["DeleteMessage"]),
+    MoveToFolder = tostring(Params["MoveToFolder"]),
+    ForwardTo = tostring(Params["ForwardTo"]),
+    RedirectTo = tostring(Params["RedirectTo"])
+| where StopProcessing =~ "True"
+    or isnotempty(FromAddressContains)
+    or isnotempty(DeleteMessage)
+    or isnotempty(MoveToFolder)
+    or isnotempty(ForwardTo)
+    or isnotempty(RedirectTo)
+| join kind=inner (
+    AADUserRiskEvents
+    | where RiskLevel in ("medium", "high")
+    | summarize LatestRiskEvent = max(TimeGenerated) by UserPrincipalName, RiskLevel, RiskEventType
+) on $left.UserId == $right.UserPrincipalName
+| project TimeGenerated, UserId, Operation, RiskLevel, RiskEventType, StopProcessing, FromAddressContains, DeleteMessage, MoveToFolder, ForwardTo, RedirectTo
